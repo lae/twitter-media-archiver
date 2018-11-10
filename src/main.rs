@@ -4,14 +4,19 @@
 extern crate glob;
 extern crate serde_json;
 extern crate reqwest;
+extern crate chrono;
+extern crate filetime;
 
 use failure::Error;
 use glob::glob;
 use serde_json::Value;
+use chrono::DateTime;
+use filetime::{FileTime, set_file_times};
 
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
 use std::io;
+use std::time::SystemTime;
 
 
 #[derive(Debug, Fail)]
@@ -87,8 +92,12 @@ fn try_main() -> Result<(), Error> {
                     } else {
                         image_url.push_str(":orig");
                         let mut response = reqwest::get(&image_url)?;
+                        let modification_date = DateTime::parse_from_rfc2822(response.headers().get("LAST-MODIFIED").and_then(|lm| lm.to_str().ok()).unwrap())?;
+                        // Last-Modified doesn't store nanos so we use 0.
+                        let mtime = FileTime::from_unix_time(modification_date.timestamp(), 0);
                         let mut target_fd = File::create(&target_file)?;
                         io::copy(&mut response, &mut target_fd)?;
+                        set_file_times(&target_file, FileTime::from_system_time(SystemTime::now()), mtime)?;
                         println!("downloaded {} to {}.", &image_url, &target_file.display());
                     }
                 }
