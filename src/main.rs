@@ -3,13 +3,15 @@
 #[macro_use] extern crate failure_derive;
 extern crate glob;
 extern crate serde_json;
+extern crate reqwest;
 
 use failure::Error;
 use glob::glob;
 use serde_json::Value;
 
-use std::path;
-use std::fs;
+use std::path::{Path, PathBuf};
+use std::fs::{self, File};
+use std::io;
 
 
 #[derive(Debug, Fail)]
@@ -45,7 +47,7 @@ fn try_main() -> Result<(), Error> {
     // Collect a list of files that should contain tweets and fail if none are found
     let files = glob(&format!("{}/data/js/tweets/*.js", path))?
                 .filter_map(|p| p.ok())
-                .collect::<Vec<path::PathBuf>>();
+                .collect::<Vec<PathBuf>>();
     if files.is_empty() {
         bail!(ArchiverError::MissingTweetData(path.to_string()));
     }
@@ -73,10 +75,23 @@ fn try_main() -> Result<(), Error> {
                 println!("https://twitter.com/{}/status/{}", tweet["user"]["screen_name"].as_str().unwrap(), tweet["id"]);
             }
         } else {
+            let target_dir = Path::new(path).join("data/images/");
+            fs::create_dir_all(&target_dir)?;
             for tweet in tweets {
                 let media = tweet["entities"]["media"].as_array().unwrap().iter().map(|m| m["media_url_https"].as_str().unwrap().to_string()).collect::<Vec<String>>();
-                //println!("https://twitter.com/{}/status/{}", tweet["user"]["screen_name"].as_str().unwrap(), tweet["id"]);
-                println!("{:?}", media);
+                let tweet_id = tweet["id"].as_u64().expect("failed to parse tweet id");
+                for mut image_url in media {
+                    let target_file = target_dir.join(format!("{}-{}", &tweet_id, image_url.split("/").last().unwrap()));
+                    if target_file.exists() {
+                        println!("already exists: {}", &target_file.display());
+                    } else {
+                        image_url.push_str(":orig");
+                        let mut response = reqwest::get(&image_url)?;
+                        let mut target_fd = File::create(&target_file)?;
+                        io::copy(&mut response, &mut target_fd)?;
+                        println!("downloaded {} to {}.", &image_url, &target_file.display());
+                    }
+                }
             }
         }
     }
